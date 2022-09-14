@@ -8,12 +8,16 @@ from pathlib import Path
 from random import shuffle
 
 import numpy as np
+import sys
+import os
+
+sys.path.append(os.path.join(os.getcwd()))
 
 from lib.pc_utils import read_plyfile, save_point_cloud
 
 
-SCANNET_RAW_PATH = Path('/data/chrischoy/datasets/scannet_raw')
-SCANNET_OUT_PATH = Path('/data/chrischoy/datasets/scannet_no_crop')
+SCANNET_RAW_PATH = Path('/home/erik/workspace/scannet_st_format')
+SCANNET_OUT_PATH = Path('./scannet_processed')
 TRAIN_DEST = 'train'
 TEST_DEST = 'test'
 SUBSETS = {TRAIN_DEST: 'scans', TEST_DEST: 'scans_test'}
@@ -69,7 +73,7 @@ for out_path, in_path in SUBSETS.items():
       processed = np.hstack((pointcloud[:, :6], np.array([label[:, -1]]).T))
 
     # Check that all points are included in the crops.
-    assert set(tuple(l) for l in all_points.tolist()) == set(tuple(l) for l in xyz.tolist())
+    #assert set(tuple(l) for l in all_points.tolist()) == set(tuple(l) for l in xyz.tolist())
 
 # Split trainval data to train/val according to scene.
 trainval_files = [f.name for f in (SCANNET_OUT_PATH / TRAIN_DEST).glob('*.ply')]

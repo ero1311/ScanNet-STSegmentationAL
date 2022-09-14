@@ -96,7 +96,7 @@ data_arg.add_argument('--train_limit_numpoints', type=int, default=0)
 data_arg.add_argument(
     '--scannet_path',
     type=str,
-    default='/cvgl2/u/jgwak/Datasets/scannet',
+    default='/home/erik/workspace/scans_processed/train',
     help='Scannet online voxelization dataset root dir')
 
 # Training / test parameters
