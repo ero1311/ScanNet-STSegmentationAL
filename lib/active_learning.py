@@ -2,18 +2,17 @@ import logging
 from pathlib import Path
 import numpy as np
 import torch
-import json
 from copy import deepcopy
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from lib.test import test
-from lib.train import train, validate
-from lib.utils import get_torch_device, np_encoder,\
+from lib.train import train
+from lib.utils import get_torch_device,\
      save_stacked_array, load_stacked_arrays
-from lib.solvers import initialize_optimizer, initialize_scheduler
 from lib.pc_utils import read_plyfile
 import MinkowskiEngine as ME
+from shutil import copytree
 
 HEURISTICS = ["random", "mc", "gt"]
 
@@ -107,6 +106,35 @@ def active_learning(NetClass, num_in_channel, num_labels, train_data_loaders, va
         start_cycle = heur_exps[sub_cycle_ind]
         resume=True
     writer = SummaryWriter(log_dir=config.log_dir)
+    if start_cycle == 0:
+        heur_config = deepcopy(config)
+        heur_config.log_dir = str(base_logdir / HEURISTICS[0] / "run_{}".format(0))
+        model = NetClass(num_in_channel, num_labels, config)
+        model.to(device)
+        if resume:
+            heur_config.resume = str(base_logdir / HEURISTICS[0] / "run_{}".format(0))
+        train(model, train_data_loaders[0], val_data_loader, heur_config)
+        dump_idx(train_data_loaders[0], config, HEURISTICS[0])
+        dump_idx(train_data_loaders[1], config, HEURISTICS[1])
+        dump_idx(train_data_loaders[2], config, HEURISTICS[2])
+        model = NetClass(num_in_channel, num_labels, config)
+        state = torch.load(heur_config.log_dir + '/weights.pth')
+        model.load_state_dict(state['state_dict'])
+        model.to(device)
+        model.eval()
+        train_data_loaders[0] = choose_new_points(model, train_data_loaders[0], config, HEURISTICS[0], device)
+        train_data_loaders[1] = choose_new_points(model, train_data_loaders[1], config, HEURISTICS[1], device)
+        train_data_loaders[2] = choose_new_points(model, train_data_loaders[2], config, HEURISTICS[2], device)
+        _, _, _, v_mIoU = test(model, val_data_loader, heur_config)
+        init_perf = {
+            "random": v_mIoU,
+            "mc": v_mIoU,
+            "gt": v_mIoU
+        }
+        writer.add_scalars('active_learning/mIoU', init_perf, 1)
+        copytree(heur_config.log_dir, base_logdir / HEURISTICS[1] / "run_{}".format(0))
+        copytree(heur_config.log_dir, base_logdir / HEURISTICS[2] / "run_{}".format(0))
+        start_cycle += 1
     for cycle in range(start_cycle, config.num_cycles):
         cycle_perf = {}
         for heur_index in range(0, len(HEURISTICS)):
