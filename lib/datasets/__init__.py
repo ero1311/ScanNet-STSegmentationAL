@@ -4,10 +4,10 @@
 # Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part of
 # the code.
 from .scannet import ScannetSparseVoxelizationDataset, \
-    ScannetSparseVoxelization2cmDataset
+    ScannetSparseVoxelization2cmDataset, ScannetSparseVoxelizationDatasetAL
 
 DATASETS = [
-    ScannetSparseVoxelizationDataset, ScannetSparseVoxelization2cmDataset
+    ScannetSparseVoxelizationDataset, ScannetSparseVoxelizationDatasetAL, ScannetSparseVoxelization2cmDataset
 ]
 
 

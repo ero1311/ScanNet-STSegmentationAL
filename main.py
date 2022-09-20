@@ -24,8 +24,9 @@ from config import get_config
 
 from lib.test import test
 from lib.train import train
+from lib.active_learning import active_learning
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
-from lib.dataset import initialize_data_loader
+from lib.dataset import initialize_data_loader, initialize_data_loaders_al
 from lib.datasets import load_dataset
 
 from models import load_model
@@ -98,6 +99,36 @@ def main():
       num_in_channel = 3
 
     num_labels = train_data_loader.dataset.NUM_LABELS
+  elif config.is_al:
+    train_data_loaders = initialize_data_loaders_al(
+        DatasetClass,
+        config,
+        phase=config.train_phase,
+        threads=config.threads,
+        augment_data=True,
+        elastic_distortion=config.train_elastic_distortion,
+        shuffle=True,
+        repeat=True,
+        batch_size=config.batch_size,
+        limit_numpoints=config.train_limit_numpoints,
+        npoints=config.npoints)
+    val_data_loader = initialize_data_loader(
+        load_dataset("ScannetSparseVoxelizationDataset"),
+        config,
+        threads=config.val_threads,
+        phase=config.val_phase,
+        augment_data=False,
+        elastic_distortion=config.test_elastic_distortion,
+        shuffle=True,
+        repeat=False,
+        batch_size=config.val_batch_size,
+        limit_numpoints=False)
+    if train_data_loaders[0].dataset.NUM_IN_CHANNEL is not None:
+      num_in_channel = train_data_loaders[0].dataset.NUM_IN_CHANNEL
+    else:
+      num_in_channel = 3
+
+    num_labels = train_data_loaders[0].dataset.NUM_LABELS
   else:
     test_data_loader = initialize_data_loader(
         DatasetClass,
@@ -149,6 +180,8 @@ def main():
 
   if config.is_train:
     train(model, train_data_loader, val_data_loader, config)
+  elif config.is_al:
+    active_learning(NetClass, num_in_channel, num_labels, train_data_loaders, val_data_loader, config)
   else:
     test(model, test_data_loader, config)
 

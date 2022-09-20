@@ -12,6 +12,7 @@ from collections import defaultdict
 import random
 import numpy as np
 from enum import Enum
+from copy import deepcopy
 
 from lib.sparse_voxelization import SparseVoxelizer
 
@@ -327,6 +328,147 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
   def cleanup(self):
     self.sparse_voxelizer.cleanup()
 
+class SparseVoxelizationDatasetAL(VoxelizationDatasetBase):
+  """This dataset loads RGB point clouds and their labels as a list of points
+  and voxelizes the pointcloud with sufficient data augmentation.
+  """
+  # Voxelization arguments
+  CLIP_BOUND = None
+  VOXEL_SIZE = 0.05  # 5cm
+
+  # Augmentation arguments
+  SCALE_AUGMENTATION_BOUND = (0.9, 1.1)
+  ROTATION_AUGMENTATION_BOUND = ((-np.pi / 6, np.pi / 6), (-np.pi, np.pi), (-np.pi / 6, np.pi / 6))
+  TRANSLATION_AUGMENTATION_RATIO_BOUND = ((-0.2, 0.2), (-0.05, 0.05), (-0.2, 0.2))
+  ELASTIC_DISTORT_PARAMS = None
+  PREVOXELIZE_VOXEL_SIZE = None
+
+  def __init__(self,
+               data_paths,
+               input_transform=None,
+               target_transform=None,
+               data_root='/',
+               explicit_rotation=-1,
+               ignore_label=255,
+               return_transformation=False,
+               augment_data=False,
+               elastic_distortion=False,
+               config=None,
+               npoints=1000,
+               **kwargs):
+
+    self.augment_data = augment_data
+    self.elastic_distortion = elastic_distortion
+    self.config = config
+    VoxelizationDatasetBase.__init__(
+        self,
+        data_paths,
+        input_transform=input_transform,
+        target_transform=target_transform,
+        cache=cache,
+        data_root=data_root,
+        ignore_mask=ignore_label,
+        return_transformation=return_transformation)
+
+    self.sparse_voxelizer = SparseVoxelizer(
+        voxel_size=self.VOXEL_SIZE,
+        clip_bound=self.CLIP_BOUND,
+        use_augmentation=augment_data,
+        scale_augmentation_bound=self.SCALE_AUGMENTATION_BOUND,
+        rotation_augmentation_bound=self.ROTATION_AUGMENTATION_BOUND,
+        translation_augmentation_ratio_bound=self.TRANSLATION_AUGMENTATION_RATIO_BOUND,
+        rotation_axis=self.LOCFEAT_IDX,
+        ignore_label=ignore_label)
+
+    # map labels not evaluated to ignore_label
+    label_map = {}
+    n_used = 0
+    for l in range(self.NUM_LABELS):
+      if l in self.IGNORE_LABELS:
+        label_map[l] = self.ignore_mask
+      else:
+        label_map[l] = n_used
+        n_used += 1
+    label_map[self.ignore_mask] = self.ignore_mask
+    self.label_map = label_map
+    self.NUM_LABELS -= len(self.IGNORE_LABELS)
+    self.selected_masks = []
+    self.npoints = npoints
+    for index in range(self.__len__()):
+      pcl, _ = self.load_ply(index)
+      self.selected_masks.append(np.zeros(pcl.shape[0], dtype=np.bool))
+      if pcl.shape[0] <= self.npoints:
+        inds = np.arange(pcl.shape[0])
+      else:
+        inds = np.random.choice(pcl.shape[0], size=self.npoints, replace=False)
+      self.selected_masks[index][inds] = True
+
+  def get_output_id(self, iteration):
+    return self.data_paths[iteration]
+
+  def convert_mat2cfl(self, mat):
+    # Generally, xyz,rgb,label
+    return mat[:, :3], mat[:, 3:-1], mat[:, -1]
+
+  def _augment_elastic_distortion(self, pointcloud):
+    if self.ELASTIC_DISTORT_PARAMS is not None:
+      if random.random() < 0.95:
+        for granularity, magnitude in self.ELASTIC_DISTORT_PARAMS:
+          pointcloud = t.elastic_distortion(pointcloud, granularity, magnitude)
+    return pointcloud
+
+  def __getitem__(self, index):
+    if self.explicit_rotation > 1:
+      rotation_space = np.linspace(-np.pi, np.pi, self.explicit_rotation + 1)
+      rotation_angle = rotation_space[index % self.explicit_rotation]
+      index //= self.explicit_rotation
+    else:
+      rotation_angle = None
+    pointcloud, center = self.load_ply(index)
+    pointcloud = pointcloud[self.selected_masks[index]]
+
+    if self.PREVOXELIZE_VOXEL_SIZE is not None:
+      inds = ME.SparseVoxelize(pointcloud[:, :3] / self.PREVOXELIZE_VOXEL_SIZE, return_index=True)
+      pointcloud = pointcloud[inds]
+
+    if self.elastic_distortion:
+      pointcloud = self._augment_elastic_distortion(pointcloud)
+
+    # import open3d as o3d
+    # from lib.open3d_utils import make_pointcloud
+    # pcd = make_pointcloud(np.floor(pointcloud[:, :3] / self.PREVOXELIZE_VOXEL_SIZE))
+    # o3d.draw_geometries([pcd])
+
+    coords, feats, labels = self.convert_mat2cfl(pointcloud)
+    outs = self.sparse_voxelizer.voxelize(
+        coords,
+        feats,
+        labels,
+        center=center,
+        rotation_angle=rotation_angle,
+        return_transformation=self.return_transformation)
+    if self.return_transformation:
+      coords, feats, labels, transformation = outs
+      transformation = np.expand_dims(transformation, 0)
+    else:
+      coords, feats, labels = outs
+
+    # map labels not used for evaluation to ignore_label
+    if self.input_transform is not None:
+      coords, feats, labels = self.input_transform(coords, feats, labels)
+    if self.target_transform is not None:
+      coords, feats, labels = self.target_transform(coords, feats, labels)
+    if self.IGNORE_LABELS is not None:
+      labels = np.array([self.label_map[x] for x in labels], dtype=np.int)
+
+    return_args = [coords, feats, labels]
+    if self.return_transformation:
+      return_args.extend([pointcloud.astype(np.float32), transformation.astype(np.float32)])
+    return tuple(return_args)
+
+  def cleanup(self):
+    self.sparse_voxelizer.cleanup()
+
 
 class SparseTemporalVoxelizationDataset(SparseVoxelizationDataset):
 
@@ -513,6 +655,102 @@ def initialize_data_loader(DatasetClass,
         shuffle=shuffle)
 
   return data_loader
+
+
+def initialize_data_loaders_al(DatasetClass,
+                           config,
+                           phase,
+                           threads,
+                           shuffle,
+                           repeat,
+                           augment_data,
+                           batch_size,
+                           limit_numpoints,
+                           elastic_distortion=False,
+                           input_transform=None,
+                           target_transform=None,
+                           npoints=1000):
+  if isinstance(phase, str):
+    phase = str2datasetphase_type(phase)
+
+  if config.return_transformation:
+    collate_fn = t.cflt_collate_fn_factory(limit_numpoints)
+  else:
+    collate_fn = t.cfl_collate_fn_factory(limit_numpoints)
+
+  input_transforms = []
+  if input_transform is not None:
+    input_transforms += input_transform
+
+  if augment_data:
+    input_transforms += [
+        t.RandomDropout(0.2),
+        t.RandomHorizontalFlip(DatasetClass.ROTATION_AXIS, DatasetClass.IS_TEMPORAL),
+        t.ChromaticAutoContrast(),
+        t.ChromaticTranslation(config.data_aug_color_trans_ratio),
+        t.ChromaticJitter(config.data_aug_color_jitter_std),
+        # t.HueSaturationTranslation(config.data_aug_hue_max, config.data_aug_saturation_max),
+    ]
+
+  if len(input_transforms) > 0:
+    input_transforms = t.Compose(input_transforms)
+  else:
+    input_transforms = None
+
+  dataset_random = DatasetClass(
+      config,
+      input_transform=input_transforms,
+      target_transform=target_transform,
+      cache=config.cache_data,
+      augment_data=augment_data,
+      elastic_distortion=elastic_distortion,
+      phase=phase,
+      npoints=npoints)
+  dataset_mc = deepcopy(dataset_random)
+  dataset_gt = deepcopy(dataset_random)
+
+  if repeat:
+    # Use the inf random sampler
+    data_loader_random = DataLoader(
+        dataset=dataset_random,
+        num_workers=threads,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        sampler=InfSampler(dataset_random, shuffle))
+    data_loader_mc = DataLoader(
+        dataset=dataset_mc,
+        num_workers=threads,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        sampler=InfSampler(dataset_mc, shuffle))
+    data_loader_gt = DataLoader(
+        dataset=dataset_gt,
+        num_workers=threads,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        sampler=InfSampler(dataset_gt, shuffle))
+  else:
+    # Default shuffle=False
+    data_loader_random = DataLoader(
+        dataset=dataset_random,
+        num_workers=threads,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        shuffle=shuffle)
+    data_loader_mc = DataLoader(
+        dataset=dataset_mc,
+        num_workers=threads,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        shuffle=shuffle)
+    data_loader_gt = DataLoader(
+        dataset=dataset_gt,
+        num_workers=threads,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        shuffle=shuffle)
+
+  return [data_loader_random, data_loader_mc, data_loader_gt]
 
 
 def generate_meta(voxels_path,

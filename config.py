@@ -102,6 +102,10 @@ data_arg.add_argument(
 # Training / test parameters
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
+train_arg.add_argument('--is_al', type=str2bool, default=True)
+train_arg.add_argument('--npoints', type=int, default=1000, help='number of points in each AL cycle')
+train_arg.add_argument('--mc_iters', type=int, default=20, help='number of')
+train_arg.add_argument('--num_cycles', type=int, default=100, help='number of AL cycles')
 train_arg.add_argument('--stat_freq', type=int, default=40, help='print frequency')
 train_arg.add_argument('--test_stat_freq', type=int, default=100, help='print frequency')
 train_arg.add_argument('--save_freq', type=int, default=1000, help='save frequency')

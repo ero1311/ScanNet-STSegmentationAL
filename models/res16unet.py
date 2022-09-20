@@ -8,7 +8,7 @@ from models.modules.common import ConvType, NormType, conv, conv_tr, get_norm, g
 from models.modules.resnet_block import BasicBlock, Bottleneck
 
 import MinkowskiEngine.MinkowskiOps as me
-
+import MinkowskiEngine.MinkowskiFunctional as F
 
 class Res16UNetBase(ResNetBase):
   BLOCK = None
@@ -204,7 +204,7 @@ class Res16UNetBase(ResNetBase):
 
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
-  def forward(self, x):
+  def forward(self, x, dropout_prob=None):
     out = self.conv0p1s1(x)
     out = self.bn0(out)
     out_p1 = get_nonlinearity_fn(self.config.nonlinearity, out)
@@ -261,6 +261,9 @@ class Res16UNetBase(ResNetBase):
 
     out = me.cat(out, out_p1)
     out = self.block8(out)
+
+    if dropout_prob is not None:
+      out = F.dropout(out, dropout_prob)
 
     return self.final(out)
 
