@@ -402,6 +402,23 @@ class SparseVoxelizationDatasetAL(VoxelizationDatasetBase):
       else:
         inds = np.random.choice(pcl.shape[0], size=self.npoints, replace=False)
       self.selected_masks[index][inds] = True
+    
+    self._prepare_weights()
+
+  def _prepare_weights(self):
+    labelweights = np.zeros(self.NUM_LABELS)
+    semantic_labels_list = []
+    for index in range(self.__len__()):
+      scene_data, _ = self.load_ply(index)
+      semantic_labels_list.append(scene_data[self.selected_masks[index]][:, -1])
+    for seg in semantic_labels_list:
+      tmp,_ = np.histogram(seg,range(self.NUM_LABELS + 1))
+      labelweights += tmp
+    labelweights = labelweights.astype(np.float32)
+    labelweights = labelweights/np.sum(labelweights)
+    self.labelweights = 1/np.log(1.2+labelweights)
+
+    return self.labelweights
 
   def get_output_id(self, iteration):
     return self.data_paths[iteration]

@@ -57,31 +57,32 @@ def choose_new_points(model, train_data_loader, config, heur, device):
 
                         sinput = ME.SparseTensor(features, coords=coordinates).to(device)
                     if heur == "mc":
-                        sum_probs = 0
+                        preds = []
                         for _ in range(config.mc_iters):
                             with torch.no_grad():
                                 soutput = model(sinput, dropout_prob=0.25)
-                                logits = soutput.F
-                                probs = torch.nn.functional.softmax(logits, dim=1)
-                                sum_probs += probs
-                        avg_prob = sum_probs / config.mc_iters
-                        entropy = (-avg_prob * avg_prob.log()).sum(1).cpu().numpy()
-                        entropy_orig = entropy[inverse]
-                        selected_points = np.argsort(entropy_orig)[-config.npoints:]
+                                _, iter_pred = soutput.F.max(1)
+                                iter_pred = iter_pred.cpu()
+                                preds.append(iter_pred[inverse].view(-1, 1))
+                        preds = torch.cat(preds, dim=1).numpy()
+                        entropy = np.zeros(preds.shape[0])
+                        for c in range(train_data_loader.dataset.NUM_LABELS):
+                            p = np.sum(preds == c, axis=1, dtype=np.float32) / config.mc_iters
+                            entropy = entropy - (p * np.log2(p + 1e-12))
+                        selected_points = np.argsort(entropy)[-config.npoints:]
                     else:
                         with torch.no_grad():
                             soutput = model(sinput)
                         _, pred = soutput.F.max(1)
                         pred = pred.cpu().numpy()
                         pred_orig = pred[inverse]
-                        wrong_preds = ~np.equal(pred_orig, labels)
-                        if wrong_preds.sum() < config.npoints:
-                            selected_points = mask_idx[wrong_preds]
-                        else:
-                            selected_points = np.random.choice(mask_idx[wrong_preds], size=config.npoints, replace=False)
+                        weights = train_data_loader.dataset.labelweights[pred_orig]
+                        weighted_wrong_preds = ~np.equal(pred_orig, labels) * weights
+                        selected_points = np.argsort(weighted_wrong_preds)[-config.npoints:]
             else:
                 selected_points = mask_idx
             train_data_loader.dataset.selected_masks[index][selected_points] = True
+    train_data_loader.dataset.labelweights = train_data_loader.dataset._prepare_weights()
     logging.info("Finished choosing points for {} heuristic!".format(heur))
     return train_data_loader
     
